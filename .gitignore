@@ -10,3 +10,6 @@ CLAUDE.md
 # python
 __pycache__/
 *.pyc
+
+# local social-media assets, never publish
+posts-media/
