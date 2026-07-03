@@ -213,3 +213,72 @@ def route(model, messages, max_tokens=1024):
               f" = ${cost:.6f}{failover}")
         return m, text, tok_in, tok_out, cost
     raise RuntimeError("all providers failed: " + "; ".join(tried))
+
+# ============================================================================
+# 4. HTTP SERVER -- an OpenAI-shaped front door
+# ============================================================================
+# We expose ONE endpoint, POST /v1/chat/completions, and answer in OpenAI's
+# exact JSON shape. That shape is the entire trick: any OpenAI SDK will talk
+# to us if you just change its base_url. Errors are OpenAI-shaped too, so
+# SDK error handling keeps working. Stdlib server -- no framework needed for
+# one route. "Threading" means slow LLM calls don't block each other.
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+class GatewayHandler(BaseHTTPRequestHandler):
+
+    def _send(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _error(self, status, message):
+        # OpenAI's error envelope, so SDKs raise their normal typed errors.
+        self._send(status, {"error": {"message": message,
+                                      "type": "invalid_request_error"}})
+
+    def do_POST(self):
+        if self.path != "/v1/chat/completions":
+            return self._error(404, f"no such endpoint: {self.path}")
+        # Auth: the client proves it knows the ONE master key. The real
+        # provider keys never leave this process -- that's the security win.
+        if self.headers.get("Authorization") != f"Bearer {key('MASTER_KEY')}":
+            return self._error(401, "invalid or missing master key")
+        try:
+            req = json.loads(self.rfile.read(
+                int(self.headers.get("Content-Length", 0))))
+            model, messages = req["model"], req["messages"]
+        except (ValueError, KeyError) as exc:
+            return self._error(400, f"bad request body: {exc}")
+        try:
+            used, text, tok_in, tok_out, _cost = route(
+                model, messages, req.get("max_tokens", 1024))
+        except ValueError as exc:          # unknown model
+            return self._error(400, str(exc))
+        except RuntimeError as exc:        # every provider failed
+            return self._error(502, str(exc))
+        # The response, shaped exactly like OpenAI's. `model` tells the truth
+        # about who actually answered -- important when failover kicked in.
+        self._send(200, {
+            "id": "chatcmpl-" + uuid.uuid4().hex[:24],
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": used,
+            "choices": [{"index": 0, "finish_reason": "stop",
+                         "message": {"role": "assistant", "content": text}}],
+            "usage": {"prompt_tokens": tok_in, "completion_tokens": tok_out,
+                      "total_tokens": tok_in + tok_out},
+        })
+
+    def log_message(self, *args):
+        pass  # silence the default per-request access log; the router logs better
+
+if __name__ == "__main__":
+    if not key("MASTER_KEY"):
+        raise SystemExit("Set MASTER_KEY in .env first (any string you invent).")
+    ready = [p for p, k in PROVIDER_KEYS.items() if key(k)]
+    print(f"nano-llm-gateway on http://localhost:8000  "
+          f"(providers with keys: {', '.join(ready) or 'NONE'})")
+    ThreadingHTTPServer(("127.0.0.1", 8000), GatewayHandler).serve_forever()
