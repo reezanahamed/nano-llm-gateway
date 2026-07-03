@@ -14,7 +14,7 @@ def ask(model):
     resp = requests.post(
         URL,
         headers={"Authorization": f"Bearer {key('MASTER_KEY')}"},
-        json={"model": model, "max_tokens": 100,
+        json={"model": model, "max_tokens": 500,
               "messages": [{"role": "user", "content": QUESTION}]},
         timeout=180,
     )

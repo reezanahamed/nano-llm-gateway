@@ -76,15 +76,15 @@ PROVIDER_KEYS = {
 # and cost tracker provider-agnostic.
 
 def call_openai(model, messages, max_tokens, base_url="https://api.openai.com",
-                key_name="OPENAI_API_KEY"):
+                key_name="OPENAI_API_KEY", tokens_param="max_completion_tokens"):
     """OpenAI quirk: their newest models renamed `max_tokens` to
     `max_completion_tokens` -- OpenAI broke its own dialect over time, which
-    is exactly why gateways exist. Auth is a simple Bearer header."""
+    is exactly why gateways exist. Auth is a simple Bearer header. The extra
+    parameters let OTHER OpenAI-compatible providers reuse this adapter."""
     resp = requests.post(
         f"{base_url}/v1/chat/completions",
         headers={"Authorization": f"Bearer {key(key_name)}"},
-        json={"model": model, "messages": messages,
-              "max_completion_tokens": max_tokens},
+        json={"model": model, "messages": messages, tokens_param: max_tokens},
         timeout=120,
     )
     resp.raise_for_status()
@@ -95,20 +95,12 @@ def call_openai(model, messages, max_tokens, base_url="https://api.openai.com",
 
 def call_deepseek(model, messages, max_tokens):
     """DeepSeek copied OpenAI's dialect wholesale (most newer providers do --
-    it means every OpenAI SDK works with them out of the box). So this adapter
-    is one line: same code, different address and key. The only wrinkle:
-    DeepSeek still uses the classic `max_tokens` name."""
-    resp = requests.post(
-        "https://api.deepseek.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {key('DEEPSEEK_API_KEY')}"},
-        json={"model": model, "messages": messages, "max_tokens": max_tokens},
-        timeout=120,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return (data["choices"][0]["message"]["content"],
-            data["usage"]["prompt_tokens"],
-            data["usage"]["completion_tokens"])
+    that's how OpenAI's format became the industry standard). So adding a
+    whole new provider is these five lines: the OpenAI adapter pointed at a
+    different address. Only wrinkle: DeepSeek kept the classic `max_tokens`."""
+    return call_openai(model, messages, max_tokens,
+                       base_url="https://api.deepseek.com",
+                       key_name="DEEPSEEK_API_KEY", tokens_param="max_tokens")
 
 def call_anthropic(model, messages, max_tokens):
     """Anthropic quirks: (1) the system prompt is a separate top-level field,
