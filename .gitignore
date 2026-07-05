@@ -1,16 +1,6 @@
-# internal working files, never publish
-PLAN.md
-POSTS.md
-CLAUDE.md
-.claude/
-
 # secrets
 .env
 
 # python
 __pycache__/
 *.pyc
-
-# local social-media assets, never publish
-posts-media/
-docs/
