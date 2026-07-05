@@ -13,3 +13,4 @@ __pycache__/
 
 # local social-media assets, never publish
 posts-media/
+docs/
